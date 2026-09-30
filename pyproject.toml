@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel", "pybind11>=2.12"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quant-pod"
+version = "0.1.0"
+description = "Simulated quant trading pod: data ingester, researcher, analyzer, and low-latency trader"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2",
+    "pandas>=2",
+    "pyarrow>=16",
+    "numpy>=1.26",
+    "yfinance>=0.2",
+    "pyzmq>=26",
+    "matplotlib>=3.8",
+    "typer>=0.12",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pybind11>=2.12",
+]
+dashboard = [
+    "streamlit>=1.38",
+    "plotly>=5.24",
+]
+
+[tool.setuptools.packages.find]
+include = ["quant_pod*"]
