@@ -324,6 +324,21 @@ python -m quant_pod.trader.cli <SYMBOL> [--strategy moving_average|risk_ratio] [
 python scripts/run_pod.py <SYMBOL> [--strategy ...] [--engine ...] [--years 5] [--replay-speed 0.0]
 ```
 
+### Universe backtest (rank a strategy across every cached symbol)
+
+```
+python scripts/backtest_universe.py [--strategy moving_average|risk_ratio|all] [--top 15]
+```
+
+Runs the vectorized backtester against every symbol currently in `data/`
+(not a portfolio strategy — each symbol is still backtested independently;
+see below), and prints universe-wide average/median return and Sharpe, a
+win rate (% of symbols with a positive return), and the top/bottom N
+performers by Sharpe. Full per-symbol results are saved to
+`reports/universe_backtest.csv`. This is what actually tells you whether a
+strategy has real edge, versus just happening to work on the one symbol you
+tested it on.
+
 ### Benchmark
 
 ```
