@@ -4,6 +4,10 @@ A simulated quant trading pod: a standardized data **ingester**, a strategy
 **researcher**, a performance **analyzer**, and a low-latency-simulated
 **trader**, wired together the way a real pod's services would be.
 
+See **[docs/GUIDE.md](docs/GUIDE.md)** for a full walkthrough of every
+module, a complete command reference, and common workflows. This README is
+just the quickstart.
+
 ```
 ingester (fetch + store)  ->  research (backtest strategies)
         |
