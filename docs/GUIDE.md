@@ -293,7 +293,16 @@ in the `quant-pod` directory.
 ```
 python -m quant_pod.ingester.cli fetch <SYMBOL> --start YYYY-MM-DD --end YYYY-MM-DD [--source yfinance|synthetic]
 python -m quant_pod.ingester.cli list
+python scripts/fetch_sp500.py [--start ...] [--end ...] [--limit N] [--delay 0.5]
 ```
+`fetch_sp500.py` scrapes the current constituent list from Wikipedia (no API
+key), normalizes share-class tickers for yfinance (`BRK.B` -> `BRK-B`), and
+loops the same `YFinanceSource` + `store.write_bars` the single-symbol CLI
+uses over all ~503 of them, with a delay between requests and per-ticker
+failure handling (a few delistings/renames failing doesn't abort the batch).
+At the default delay it takes roughly 10-15 minutes and stores ~30-35MB for
+5 years of daily bars across the whole index. Use `--limit N` to test on a
+handful of tickers first.
 
 ### Replay (run before or after the trader — see workflows below)
 
