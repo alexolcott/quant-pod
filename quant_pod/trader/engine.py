@@ -9,7 +9,7 @@ other.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import pandas as pd
 import zmq
@@ -20,6 +20,7 @@ from quant_pod.common.events import Bar, Order, OrderType, Side
 from quant_pod.common.logging import get_logger
 from quant_pod.ingester.replay import END_OF_STREAM
 from quant_pod.research.strategy import Strategy
+from quant_pod.trader.bar_buffer import BarBuffer
 from quant_pod.trader.latency import LatencyTracker
 from quant_pod.trader.risk_limits import RiskLimits
 from quant_pod.trader.sim_exchange import PySimExchange
@@ -46,7 +47,7 @@ class TraderResult:
     equity_curve: pd.Series
     returns: pd.Series
     trades: pd.DataFrame
-    decision_latency: LatencyTracker
+    tick_latency: LatencyTracker
     matching_latency: LatencyTracker
 
 
@@ -60,7 +61,10 @@ async def run_trader(
 ) -> TraderResult:
     risk_limits = risk_limits or RiskLimits()
     exchange = _make_exchange(engine)
-    decision_latency = LatencyTracker(label=f"{strategy.strategy_id}/decision")
+    # Every tick pays for a bar-buffer append + strategy evaluation, whether
+    # or not it produces a trade -- that's the real steady-state hot-path
+    # cost, so it's timed on every tick, not just the ones that trade.
+    tick_latency = LatencyTracker(label=f"{strategy.strategy_id}/tick")
     matching_latency = LatencyTracker(label=f"{strategy.strategy_id}/matching[{engine}]")
 
     ctx = zmq.asyncio.Context()
@@ -70,7 +74,7 @@ async def run_trader(
 
     log.info("Trader started: symbol=%s engine=%s strategy=%s", symbol, engine, strategy.strategy_id)
 
-    bar_rows: list[dict] = []
+    bar_buffer = BarBuffer()
     position = 0.0
     cash = initial_cash
     equity_points: list[tuple[pd.Timestamp, float]] = []
@@ -85,19 +89,11 @@ async def run_trader(
                 break
 
             bar = Bar.model_validate_json(payload)
-            bar_rows.append(
-                {
-                    "timestamp": bar.timestamp,
-                    "open": bar.open,
-                    "high": bar.high,
-                    "low": bar.low,
-                    "close": bar.close,
-                    "volume": bar.volume,
-                }
-            )
-            bars_df = pd.DataFrame(bar_rows).set_index("timestamp")
+            bar_buffer.append(bar)
+            bars_df = bar_buffer.as_dataframe()
 
             target_position = strategy.target_position_for(bars_df)
+            tick_latency.record(time.perf_counter_ns() - tick_received_ns)
             order_qty = target_position - position
 
             if order_qty != 0:
@@ -108,7 +104,6 @@ async def run_trader(
                     order_type=OrderType.MARKET,
                     strategy_id=strategy.strategy_id,
                 )
-                decision_latency.record(order.created_ns - tick_received_ns)
 
                 ok, reason = risk_limits.check(order, position, bar.close)
                 if not ok:
@@ -141,14 +136,14 @@ async def run_trader(
     returns = equity_curve.pct_change().fillna(0.0).rename("returns")
     trades = pd.DataFrame(trade_records)
 
-    log.info("Trader finished: %d bars processed, %d trades", len(bar_rows), len(trades))
-    decision_latency.print_summary()
+    log.info("Trader finished: %d bars processed, %d trades", len(bar_buffer), len(trades))
+    tick_latency.print_summary()
     matching_latency.print_summary()
 
     return TraderResult(
         equity_curve=equity_curve,
         returns=returns,
         trades=trades,
-        decision_latency=decision_latency,
+        tick_latency=tick_latency,
         matching_latency=matching_latency,
     )

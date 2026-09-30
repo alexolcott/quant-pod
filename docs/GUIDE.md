@@ -166,21 +166,41 @@ a matching engine, and latency instrumentation.
 - **`engine.py`** — `run_trader(symbol, strategy, engine, ...)`, an asyncio
   loop:
   1. Subscribe to the replay feed over ZeroMQ.
-  2. On each new bar: append it to a running history, ask the strategy for
-     a target position, diff against the current position to get an order
-     quantity.
+  2. On each new bar: append it to a `BarBuffer` (below), ask the strategy
+     for a target position, diff against the current position to get an
+     order quantity.
   3. If nonzero, build an `Order`, run it through `risk_limits.check(...)`,
      and if it passes, send it to the matching engine (`sim_exchange.PySimExchange`
      or `hotpath_exchange.CppSimExchange`, selected by `--engine`).
-  4. Record two latency numbers per order: **decision latency** (tick
-     arrival → order construction, i.e. how long the strategy + order-building
-     code took) and **matching latency** (order → fill, i.e. how long the
-     matching engine itself took — this is the number that differs between
-     the Python and C++ backends).
+  4. Record two latency numbers: **tick latency** (tick arrival → strategy
+     decision, recorded on *every* bar, not just ones that trade — this is
+     the real steady-state hot-path cost) and **matching latency** (order →
+     fill, recorded only on bars that trade — this is the number that
+     differs between the Python and C++ backends).
   5. Mark equity to market on every bar (`cash + position * close`), building
      an equity curve exactly like the backtester's, so `analyzer` can report
      on it identically.
   6. Stop on the replay's `__END__` sentinel.
+- **`bar_buffer.py`** — `BarBuffer`: an earlier version of `engine.py` rebuilt
+  a `pd.DataFrame` from a growing `list[dict]` on every single tick — correct,
+  but it re-infers a dtype per column and re-walks the whole list every time,
+  which `scripts/benchmark_bar_buffer.py` measured at ~600µs/tick on average
+  and climbing past 800µs by the end of a ~1,250-bar run (quadratic overall).
+  `BarBuffer` instead keeps pre-allocated numpy arrays that double in capacity
+  when full (so `append` is O(1) amortized, same trick a Python list uses
+  internally) and wraps zero-copy array slices into a DataFrame on read —
+  measured **~10x faster**, and flat at ~60µs regardless of how much history
+  has accumulated. Run the benchmark yourself:
+  `python scripts/benchmark_bar_buffer.py`.
+  Fixing this also exposed the *next* bottleneck honestly: with the DataFrame
+  rebuild no longer dominating, most of the remaining ~700µs/tick is the
+  example strategies' `.rolling(...)` calls recomputing over the *entire*
+  history every tick (correct, since that's what makes them identical to the
+  backtester's code path, but not incremental). A true low-latency version
+  would maintain running state — e.g. incremental sums for a moving average —
+  instead of recomputing from scratch each time; that's a bigger interface
+  change (the `Strategy` base class would need a streaming counterpart to its
+  batch `generate_target_positions`) and hasn't been done here.
 - **`sim_exchange.py`** — `PySimExchange`: the plain-Python matching backend.
   For a market order, just applies a slippage-adjusted price to the current
   reference price. Intentionally trivial — it's the baseline the C++ path is
@@ -299,6 +319,7 @@ python scripts/run_pod.py <SYMBOL> [--strategy ...] [--engine ...] [--years 5] [
 
 ```
 python scripts/benchmark_hotpath.py [n_iterations]
+python scripts/benchmark_bar_buffer.py [n_bars]
 ```
 
 ### Dashboard
