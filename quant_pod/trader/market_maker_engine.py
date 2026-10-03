@@ -39,7 +39,7 @@ from quant_pod.common.config import REPLAY_ZMQ_ADDR
 from quant_pod.common.events import Bar, Order, OrderType, Side
 from quant_pod.common.logging import get_logger
 from quant_pod.ingester.replay import END_OF_STREAM
-from quant_pod.marketmaking.avellaneda_stoikov import optimal_spread, reservation_price
+from quant_pod.marketmaking.avellaneda_stoikov import apply_tolerance_band, optimal_spread, reservation_price
 from quant_pod.marketmaking.simulator import Fill, MarketMakerResult, fill_probability
 from quant_pod.trader.bar_buffer import BarBuffer
 from quant_pod.trader.latency import LatencyTracker
@@ -63,6 +63,7 @@ async def run_market_maker_trader(
     default_sigma: float = 1.0,
     initial_cash: float = 100_000.0,
     risk_limits: RiskLimits | None = None,
+    quote_band: float | None = None,
     zmq_addr: str = REPLAY_ZMQ_ADDR,
     seed: int | None = None,
 ) -> MarketMakerResult:
@@ -88,6 +89,7 @@ async def run_market_maker_trader(
     cashes: list[float] = []
     equities: list[float] = []
     fills: list[Fill] = []
+    posted_bid, posted_ask = None, None
 
     try:
         step = 0
@@ -127,6 +129,9 @@ async def run_market_maker_trader(
                 bid = np.nan
             if not risk_limits.check(_hypothetical_order(symbol, Side.SELL, fill_size), position, mid)[0]:
                 ask = np.nan
+            if quote_band is not None:
+                bid, ask = apply_tolerance_band(bid, ask, posted_bid, posted_ask, quote_band)
+            posted_bid, posted_ask = bid, ask
             quote_latency.record(time.perf_counter_ns() - tick_received_ns)
 
             mids.append(mid)

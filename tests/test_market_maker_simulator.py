@@ -1,7 +1,7 @@
 import numpy as np
 
 from quant_pod.marketmaking.avellaneda_stoikov import AvellanedaStoikovQuoter
-from quant_pod.marketmaking.simulator import run_market_maker_sim
+from quant_pod.marketmaking.simulator import run_market_maker_sim, summarize
 
 
 def _quoter(gamma: float) -> AvellanedaStoikovQuoter:
@@ -77,3 +77,28 @@ def test_quote_is_pulled_on_the_side_that_would_breach_the_limit():
     assert at_long_limit.any() and at_short_limit.any()  # sanity: the limit actually binds both ways
     assert np.isnan(result.bid[:-1][at_long_limit]).all()
     assert np.isnan(result.ask[:-1][at_short_limit]).all()
+
+
+def test_quote_band_sharply_reduces_requote_rate():
+    kwargs = dict(mid0=100.0, sigma=0.3, dt=1.0, n_steps=5000, seed=7, arrival_rate=0.5)
+    unbanded = run_market_maker_sim(_quoter(0.1), **kwargs)
+    banded = run_market_maker_sim(_quoter(0.1), quote_band=0.05, **kwargs)
+    assert summarize(unbanded)["bid_requote_rate"] > 0.9  # essentially every step, with no band
+    assert summarize(banded)["bid_requote_rate"] < summarize(unbanded)["bid_requote_rate"]
+
+
+def test_quote_band_none_matches_unbanded_behavior_exactly():
+    # quote_band=None (the default) must be a true no-op, not just "a very wide band".
+    kwargs = dict(mid0=100.0, sigma=0.3, dt=1.0, n_steps=2000, seed=7, arrival_rate=2.0)
+    a = run_market_maker_sim(_quoter(0.1), quote_band=None, **kwargs)
+    b = run_market_maker_sim(_quoter(0.1), **kwargs)
+    assert np.array_equal(a.bid, b.bid, equal_nan=True)
+    assert np.array_equal(a.ask, b.ask, equal_nan=True)
+
+
+def test_quote_band_still_respects_max_inventory():
+    result = run_market_maker_sim(
+        _quoter(1e-6), mid0=100.0, sigma=0.3, dt=1.0, n_steps=5000, seed=1,
+        arrival_rate=0.3, max_inventory=3.0, quote_band=0.05,
+    )
+    assert np.max(np.abs(result.inventory)) <= 3.0

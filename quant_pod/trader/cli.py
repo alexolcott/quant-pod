@@ -67,6 +67,7 @@ def quote(
     vol_window: int = typer.Option(20, help="Rolling window (in bars) for the live sigma estimate"),
     default_sigma: float = typer.Option(1.0, help="Sigma to use until vol_window bars of history accumulate"),
     initial_cash: float = typer.Option(100_000.0, help="Starting cash"),
+    quote_band: float | None = typer.Option(None, help="Tolerance zone: only repost a side once it drifts past this (unset = requote every tick)"),
     seed: int = typer.Option(7, help="Random seed for the fill-decision draws"),
 ):
     """Run the Avellaneda-Stoikov market maker live against the replay feed
@@ -75,7 +76,7 @@ def quote(
         run_market_maker_trader(
             symbol, gamma=gamma, kappa=kappa, arrival_rate=arrival_rate, time_horizon=time_horizon,
             vol_window=vol_window, default_sigma=default_sigma, initial_cash=initial_cash,
-            risk_limits=RiskLimits(max_position=max_position), seed=seed,
+            quote_band=quote_band, risk_limits=RiskLimits(max_position=max_position), seed=seed,
         )
     )
 
@@ -84,6 +85,7 @@ def quote(
     print(f"Fills:           {stats['num_fills']}")
     print(f"Final inventory: {stats['final_inventory']:+.1f}")
     print(f"Max |inventory|: {stats['max_abs_inventory']:.1f}")
+    print(f"Requote rate (bid/ask): {stats['bid_requote_rate']:.1%} / {stats['ask_requote_rate']:.1%}")
 
     if result.fills:
         horizons = [h for h in (1, 5, 20) if h < len(result.mid)]

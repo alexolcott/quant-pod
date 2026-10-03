@@ -31,12 +31,13 @@ def main(
     arrival_rate: float = typer.Option(140.0, help="'A' in lambda(delta) = A * exp(-kappa * delta)"),
     horizon: float = typer.Option(1.0, help="Simulated horizon, in trading days"),
     max_inventory: float | None = typer.Option(None, help="Hard position limit (unbounded if unset)"),
+    quote_band: float | None = typer.Option(None, help="Tolerance zone: only repost a side once it drifts past this (unset = requote every tick)"),
     seed: int = typer.Option(7, help="Random seed"),
 ):
     quoter = AvellanedaStoikovQuoter(gamma=gamma, kappa=kappa, sigma=sigma)
     result = run_market_maker_sim(
         quoter, mid0=mid0, sigma=sigma, horizon=horizon, arrival_rate=arrival_rate,
-        max_inventory=max_inventory, seed=seed,
+        max_inventory=max_inventory, quote_band=quote_band, seed=seed,
     )
     stats = summarize(result)
 
@@ -47,6 +48,7 @@ def main(
     print(f"Max |inventory|:      {stats['max_abs_inventory']:.1f}")
     print(f"Inventory std dev:    {stats['inventory_std']:.2f}")
     print(f"Avg quoted spread:    {stats['avg_spread_bps']:.1f} bps")
+    print(f"Requote rate (bid/ask): {stats['bid_requote_rate']:.1%} / {stats['ask_requote_rate']:.1%}")
     if max_inventory is not None:
         print(f"Time quoting bid/ask: {stats['pct_steps_quoting_bid']:.1%} / {stats['pct_steps_quoting_ask']:.1%}")
 

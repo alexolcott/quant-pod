@@ -21,7 +21,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from quant_pod.marketmaking.avellaneda_stoikov import optimal_spread, reservation_price
+from quant_pod.marketmaking.avellaneda_stoikov import apply_tolerance_band, optimal_spread, reservation_price
 from quant_pod.marketmaking.simulator import Fill, MarketMakerResult, fill_probability
 
 
@@ -36,12 +36,14 @@ def run_market_maker_on_bars(
     default_sigma: float = 1.0,
     initial_cash: float = 0.0,
     max_inventory: float | None = None,
+    quote_band: float | None = None,
     seed: int | None = None,
 ) -> MarketMakerResult:
     """`bars` must have a `close` column (as `ingester.store.read_bars` returns).
     `max_inventory` works exactly as in `run_market_maker_sim`: once a fill
     would breach it, that side is pulled (quoted NaN, zero fill probability)
-    until inventory drifts back under it.
+    until inventory drifts back under it. `quote_band` is the same optional
+    tolerance zone (see `avellaneda_stoikov.apply_tolerance_band`).
     """
     rng = np.random.default_rng(seed)
     closes = bars["close"]
@@ -56,6 +58,7 @@ def run_market_maker_on_bars(
     fills: list[Fill] = []
 
     position, cash = 0.0, initial_cash
+    posted_bid, posted_ask = None, None
     for step in range(n):
         mid = float(closes.iloc[step])
         window = closes.iloc[max(0, step - vol_window) : step + 1]
@@ -75,6 +78,9 @@ def run_market_maker_on_bars(
                 bid = np.nan
             if position - fill_size < -max_inventory:
                 ask = np.nan
+        if quote_band is not None:
+            bid, ask = apply_tolerance_band(bid, ask, posted_bid, posted_ask, quote_band)
+        posted_bid, posted_ask = bid, ask
 
         mids[step], bids[step], asks[step] = mid, bid, ask
         inventories[step], cashes[step] = position, cash

@@ -4,6 +4,7 @@ import pytest
 
 from quant_pod.marketmaking.historical import run_market_maker_on_bars
 from quant_pod.marketmaking.markout import compute_markouts
+from quant_pod.marketmaking.simulator import summarize
 
 
 def _bars(closes: list[float]) -> pd.DataFrame:
@@ -73,3 +74,10 @@ def test_result_is_compatible_with_markout_analysis():
         (markouts["spread_capture_1"] + markouts["adverse_selection_1"]).to_numpy(),
         equal_nan=True,
     )
+
+
+def test_quote_band_reduces_requote_rate():
+    bars = _bars(_synthetic_closes(2000, 1.0, seed=8))
+    unbanded = run_market_maker_on_bars(bars, gamma=0.1, kappa=1.5, arrival_rate=2.0, seed=7)
+    banded = run_market_maker_on_bars(bars, gamma=0.1, kappa=1.5, arrival_rate=2.0, quote_band=0.1, seed=7)
+    assert summarize(banded)["bid_requote_rate"] < summarize(unbanded)["bid_requote_rate"]

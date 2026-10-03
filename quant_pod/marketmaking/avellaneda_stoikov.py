@@ -49,3 +49,43 @@ class AvellanedaStoikovQuoter:
         r = reservation_price(mid, inventory, self.gamma, self.sigma, time_remaining)
         spread = optimal_spread(self.gamma, self.sigma, time_remaining, self.kappa)
         return r - spread / 2, r + spread / 2
+
+
+def apply_tolerance_band(
+    theoretical_bid: float,
+    theoretical_ask: float,
+    posted_bid: float | None,
+    posted_ask: float | None,
+    band: float,
+) -> tuple[float, float]:
+    """A tolerance-zone (deadband) requoting policy: given the fresh
+    theoretical quote and whatever is currently posted, only move a side if
+    the theoretical value has drifted more than `band` away from it --
+    otherwise keep resting at the old price. This is what makes it
+    hysteresis rather than a one-shot filter: the comparison point is the
+    *last posted* price, not a fixed reference, so it only re-anchors when a
+    move actually happens, and won't flicker from theoretical noise sitting
+    near a static boundary.
+
+    Real market makers do this because every requote is a cancel + new order
+    -- it costs exchange fees, and constantly adjusting is itself a signal
+    other participants can detect and trade against ("quote flicker").
+
+    `posted_bid`/`posted_ask` is None on the first call (nothing posted yet,
+    so the theoretical value is adopted immediately) and NaN whenever a side
+    isn't quoting (e.g. pulled by a `max_inventory` limit elsewhere) -- in
+    both cases, and whenever the theoretical value itself is NaN, the band
+    comparison is skipped and the fresh value is adopted directly: a
+    suppressed side shouldn't stick around stale once it starts quoting
+    again, and a side that just got suppressed shouldn't stay at its last
+    finite price.
+    """
+
+    def _update(theoretical: float, posted: float | None) -> float:
+        if posted is None or np.isnan(posted) or np.isnan(theoretical):
+            return theoretical
+        if abs(theoretical - posted) > band:
+            return theoretical
+        return posted
+
+    return _update(theoretical_bid, posted_bid), _update(theoretical_ask, posted_ask)

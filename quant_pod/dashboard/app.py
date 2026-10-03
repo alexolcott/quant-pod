@@ -191,6 +191,16 @@ if mode == "Market maker":
 
         limit_inventory = st.checkbox("Limit inventory", value=False)
         max_inventory = st.slider("Max inventory", 1.0, 50.0, 10.0, step=1.0) if limit_inventory else None
+
+        use_quote_band = st.checkbox("Tolerance zone (reduce requoting)", value=False)
+        quote_band = (
+            st.slider(
+                "Band (price units)", 0.01, 2.0, 0.1, step=0.01,
+                help="Only repost a side once it drifts more than this from what's currently posted.",
+            )
+            if use_quote_band else None
+        )
+
         seed = st.number_input("Random seed", value=7, step=1)
         run_mm = st.button("Run simulation", type="primary")
 
@@ -211,7 +221,7 @@ if mode == "Market maker":
                 result = run_market_maker_on_bars(
                     bars, gamma=gamma, kappa=kappa, arrival_rate=arrival_rate,
                     time_horizon=time_horizon, vol_window=vol_window, default_sigma=default_sigma,
-                    max_inventory=max_inventory, seed=int(seed),
+                    max_inventory=max_inventory, quote_band=quote_band, seed=int(seed),
                 )
             result_x, result_x_title = bars.index, "date"
         else:
@@ -219,7 +229,7 @@ if mode == "Market maker":
             with st.spinner("Simulating..."):
                 result = run_market_maker_sim(
                     quoter, mid0=mid0, sigma=sigma, horizon=horizon, arrival_rate=arrival_rate,
-                    max_inventory=max_inventory, seed=int(seed),
+                    max_inventory=max_inventory, quote_band=quote_band, seed=int(seed),
                 )
             result_x, result_x_title = None, "step"
         st.session_state["last_mm_result"] = (result, result_x, result_x_title)
@@ -228,12 +238,13 @@ if mode == "Market maker":
     stats = summarize_market_maker(result)
 
     st.subheader("Avellaneda-Stoikov market maker")
-    cols = st.columns(5)
+    cols = st.columns(6)
     cols[0].metric("Total PnL", f"{stats['total_pnl']:+.2f}")
     cols[1].metric("Fills", f"{stats['num_fills']}")
     cols[2].metric("Final inventory", f"{stats['final_inventory']:+.0f}")
     cols[3].metric("Max |inventory|", f"{stats['max_abs_inventory']:.0f}")
     cols[4].metric("Avg spread", f"{stats['avg_spread_bps']:.1f} bps")
+    cols[5].metric("Requote rate", f"{stats['bid_requote_rate']:.0%}")
 
     st.plotly_chart(mm_price_figure(result, x=result_x, x_title=result_x_title), use_container_width=True)
     st.plotly_chart(mm_inventory_figure(result, x=result_x, x_title=result_x_title), use_container_width=True)

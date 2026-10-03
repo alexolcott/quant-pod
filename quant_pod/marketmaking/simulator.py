@@ -21,7 +21,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from quant_pod.marketmaking.avellaneda_stoikov import AvellanedaStoikovQuoter
+from quant_pod.marketmaking.avellaneda_stoikov import AvellanedaStoikovQuoter, apply_tolerance_band
 from quant_pod.marketmaking.order_flow import simulate_mid_price_path
 
 
@@ -80,12 +80,18 @@ def run_market_maker_sim(
     fill_size: float = 1.0,
     initial_cash: float = 0.0,
     max_inventory: float | None = None,
+    quote_band: float | None = None,
     seed: int | None = None,
 ) -> MarketMakerResult:
     """`max_inventory` is a hard position limit layered on top of the AS quotes
     (which only discourage runaway inventory via skew, never forbid it): once a
     fill would push |inventory| past the limit, that side is pulled (quoted as
     NaN, probability of a fill on it is 0) until inventory drifts back under it.
+
+    `quote_band` is an optional tolerance zone (see `avellaneda_stoikov.
+    apply_tolerance_band`): when set, a side only reposts once the fresh
+    theoretical quote drifts more than `quote_band` from what's currently
+    posted, instead of snapping to the theoretical value every step.
     """
     if n_steps is None:
         n_steps = int(round(horizon / dt))
@@ -101,6 +107,7 @@ def run_market_maker_sim(
     cash[0] = initial_cash
     equity[0] = initial_cash + inventory[0] * mid_path[0]
     fills: list[Fill] = []
+    posted_bid, posted_ask = None, None
 
     for step in range(n_steps + 1):
         mid = mid_path[step]
@@ -112,6 +119,9 @@ def run_market_maker_sim(
                 b = np.nan
             if q - fill_size < -max_inventory:
                 a = np.nan
+        if quote_band is not None:
+            b, a = apply_tolerance_band(b, a, posted_bid, posted_ask, quote_band)
+        posted_bid, posted_ask = b, a
         bid[step], ask[step] = b, a
 
         if step == n_steps:
@@ -137,6 +147,19 @@ def run_market_maker_sim(
     return MarketMakerResult(mid=mid_path, bid=bid, ask=ask, inventory=inventory, cash=cash, equity=equity, fills=fills)
 
 
+def _requote_rate(quotes: np.ndarray) -> float:
+    """Fraction of steps where the posted quote actually changed from the
+    previous step (equal_nan=True so NaN -> NaN, i.e. staying pulled by
+    `max_inventory`, doesn't count as a requote). 1.0 with no `quote_band`
+    (the theoretical price moves essentially every step); meaningfully lower
+    with one, which is the whole point of `apply_tolerance_band`.
+    """
+    if len(quotes) < 2:
+        return 0.0
+    unchanged = np.isclose(quotes[:-1], quotes[1:], equal_nan=True, rtol=0, atol=0)
+    return float(np.mean(~unchanged))
+
+
 def summarize(result: MarketMakerResult) -> dict:
     spread = result.ask - result.bid
     return {
@@ -148,4 +171,6 @@ def summarize(result: MarketMakerResult) -> dict:
         "avg_spread_bps": float(np.nanmean(spread / result.mid) * 10_000),
         "pct_steps_quoting_bid": float(np.mean(~np.isnan(result.bid))),
         "pct_steps_quoting_ask": float(np.mean(~np.isnan(result.ask))),
+        "bid_requote_rate": _requote_rate(result.bid),
+        "ask_requote_rate": _requote_rate(result.ask),
     }
