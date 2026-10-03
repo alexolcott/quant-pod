@@ -30,13 +30,14 @@ def main(
     mid0: float = typer.Option(100.0, help="Starting mid-price"),
     arrival_rate: float = typer.Option(140.0, help="'A' in lambda(delta) = A * exp(-kappa * delta)"),
     horizon: float = typer.Option(1.0, help="Simulated horizon, in trading days"),
-    max_inventory: float | None = typer.Option(None, help="Hard position limit (unbounded if unset)"),
+    fill_size: float = typer.Option(1.0, help="Shares per fill -- PnL scales roughly linearly with this"),
+    max_inventory: float | None = typer.Option(None, help="Hard position limit, in shares like fill_size (unbounded if unset)"),
     quote_band: float | None = typer.Option(None, help="Tolerance zone: only repost a side once it drifts past this (unset = requote every tick)"),
     seed: int = typer.Option(7, help="Random seed"),
 ):
     quoter = AvellanedaStoikovQuoter(gamma=gamma, kappa=kappa, sigma=sigma)
     result = run_market_maker_sim(
-        quoter, mid0=mid0, sigma=sigma, horizon=horizon, arrival_rate=arrival_rate,
+        quoter, mid0=mid0, sigma=sigma, horizon=horizon, arrival_rate=arrival_rate, fill_size=fill_size,
         max_inventory=max_inventory, quote_band=quote_band, seed=seed,
     )
     stats = summarize(result)

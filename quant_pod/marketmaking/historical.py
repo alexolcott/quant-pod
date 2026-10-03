@@ -21,7 +21,12 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from quant_pod.marketmaking.avellaneda_stoikov import apply_tolerance_band, optimal_spread, reservation_price
+from quant_pod.marketmaking.avellaneda_stoikov import (
+    apply_tolerance_band,
+    optimal_spread,
+    reservation_price,
+    suppress_quotes_crossing_mid,
+)
 from quant_pod.marketmaking.simulator import Fill, MarketMakerResult, fill_probability
 
 
@@ -73,6 +78,7 @@ def run_market_maker_on_bars(
         r = reservation_price(mid, position, gamma, sigma, time_horizon)
         spread = optimal_spread(gamma, sigma, time_horizon, kappa)
         bid, ask = r - spread / 2, r + spread / 2
+        bid, ask = suppress_quotes_crossing_mid(bid, ask, mid)
         if max_inventory is not None:
             if position + fill_size > max_inventory:
                 bid = np.nan

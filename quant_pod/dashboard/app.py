@@ -14,7 +14,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from quant_pod.analyzer import metrics as m
-from quant_pod.common.config import DATA_DIR
+from quant_pod.common.config import DATA_DIR, REPO_ROOT
 from quant_pod.ingester import store
 from quant_pod.ingester.sources.yfinance_source import YFinanceSource
 from quant_pod.marketmaking.avellaneda_stoikov import AvellanedaStoikovQuoter
@@ -45,6 +45,29 @@ st.set_page_config(page_title="quant-pod research dashboard", layout="wide")
 
 def cached_symbols() -> list[str]:
     return sorted(p.stem for p in DATA_DIR.glob("*.parquet"))
+
+
+def _load_doc_section(path, heading: str) -> str:
+    """Extracts the text between a '## {heading}' line and the next '## '
+    heading (or end of file) from a markdown doc -- so the in-app popup and
+    docs/MARKET_MAKING.md stay a single source of truth instead of two copies
+    that can drift apart.
+    """
+    text = path.read_text(encoding="utf-8")
+    marker = f"## {heading}"
+    start = text.index(marker) + len(marker)
+    rest = text[start:]
+    end = rest.find("\n## ")
+    return rest[: end if end != -1 else None].strip()
+
+
+@st.dialog("Market maker parameter reference", width="large")
+def _show_parameter_reference():
+    doc_path = REPO_ROOT / "docs" / "MARKET_MAKING.md"
+    try:
+        st.markdown(_load_doc_section(doc_path, "Parameter reference"))
+    except (FileNotFoundError, ValueError):
+        st.error("Couldn't load the parameter reference from docs/MARKET_MAKING.md.")
 
 
 def equity_figure(equity_curves: dict[str, pd.Series]) -> go.Figure:
@@ -158,6 +181,9 @@ st.sidebar.divider()
 
 if mode == "Market maker":
     with st.sidebar:
+        if st.button("📖 Parameter reference"):
+            _show_parameter_reference()
+
         st.header("Data")
         data_source = st.radio("Data source", ["Synthetic", "Real symbol"])
 
@@ -189,8 +215,16 @@ if mode == "Market maker":
         else:
             arrival_rate = st.slider("Arrival intensity (A)", 1.0, 300.0, 140.0)
 
+        fill_size = st.number_input(
+            "Shares per fill", min_value=0.01, value=1.0, step=1.0,
+            help="PnL scales roughly linearly with this -- the default (1 share) is why multi-year PnL can look tiny.",
+        )
+
         limit_inventory = st.checkbox("Limit inventory", value=False)
-        max_inventory = st.slider("Max inventory", 1.0, 50.0, 10.0, step=1.0) if limit_inventory else None
+        max_inventory = (
+            st.slider("Max inventory (shares, like 'shares per fill' above)", 1.0, 50.0, 10.0, step=1.0)
+            if limit_inventory else None
+        )
 
         use_quote_band = st.checkbox("Tolerance zone (reduce requoting)", value=False)
         quote_band = (
@@ -219,7 +253,7 @@ if mode == "Market maker":
                 st.stop()
             with st.spinner("Simulating..."):
                 result = run_market_maker_on_bars(
-                    bars, gamma=gamma, kappa=kappa, arrival_rate=arrival_rate,
+                    bars, gamma=gamma, kappa=kappa, arrival_rate=arrival_rate, fill_size=fill_size,
                     time_horizon=time_horizon, vol_window=vol_window, default_sigma=default_sigma,
                     max_inventory=max_inventory, quote_band=quote_band, seed=int(seed),
                 )
@@ -228,7 +262,7 @@ if mode == "Market maker":
             quoter = AvellanedaStoikovQuoter(gamma=gamma, kappa=kappa, sigma=sigma)
             with st.spinner("Simulating..."):
                 result = run_market_maker_sim(
-                    quoter, mid0=mid0, sigma=sigma, horizon=horizon, arrival_rate=arrival_rate,
+                    quoter, mid0=mid0, sigma=sigma, horizon=horizon, arrival_rate=arrival_rate, fill_size=fill_size,
                     max_inventory=max_inventory, quote_band=quote_band, seed=int(seed),
                 )
             result_x, result_x_title = None, "step"

@@ -8,6 +8,7 @@ from quant_pod.marketmaking.avellaneda_stoikov import (
     apply_tolerance_band,
     optimal_spread,
     reservation_price,
+    suppress_quotes_crossing_mid,
 )
 
 
@@ -100,3 +101,29 @@ def test_tolerance_band_recovers_from_a_previously_suppressed_side_immediately()
     # adopted immediately regardless of band, not compared against NaN.
     bid, _ = apply_tolerance_band(99.0, 101.0, posted_bid=np.nan, posted_ask=101.0, band=0.5)
     assert bid == 99.0
+
+
+def test_suppress_quotes_crossing_mid_leaves_normal_quotes_untouched():
+    bid, ask = suppress_quotes_crossing_mid(99.0, 101.0, mid=100.0)
+    assert (bid, ask) == (99.0, 101.0)
+
+
+def test_suppress_quotes_crossing_mid_catches_an_ask_skewed_below_mid():
+    # A large long position can skew the ask below the current mid -- selling
+    # there would be a guaranteed loss relative to fair value, not genuine
+    # inventory-risk management, so that side is pulled.
+    bid, ask = suppress_quotes_crossing_mid(80.0, 90.0, mid=100.0)
+    assert bid == 80.0
+    assert np.isnan(ask)
+
+
+def test_suppress_quotes_crossing_mid_catches_a_bid_skewed_above_mid():
+    bid, ask = suppress_quotes_crossing_mid(110.0, 120.0, mid=100.0)
+    assert np.isnan(bid)
+    assert ask == 120.0
+
+
+def test_suppress_quotes_crossing_mid_is_safe_on_already_nan_input():
+    bid, ask = suppress_quotes_crossing_mid(np.nan, np.nan, mid=100.0)
+    assert np.isnan(bid)
+    assert np.isnan(ask)

@@ -51,6 +51,29 @@ class AvellanedaStoikovQuoter:
         return r - spread / 2, r + spread / 2
 
 
+def suppress_quotes_crossing_mid(bid: float, ask: float, mid: float) -> tuple[float, float]:
+    """Guards against the inventory skew overshooting far enough that a quote
+    crosses to the wrong side of mid. The skew term in `reservation_price` is
+    `inventory * gamma * sigma^2 * time_remaining` -- for a large enough
+    inventory (a big `fill_size`), sigma, or time_remaining, that can exceed
+    half the spread, pushing the ask *below* mid (or the bid *above* it).
+    When that happens, the quoted price itself is already a realized loss
+    relative to fair value the moment it's posted: e.g. buying 10 shares at
+    $40 can skew the ask to $29 one tick later, selling that same inventory
+    at a guaranteed ~$11/share loss, not genuine inventory-risk management.
+
+    Rather than let the model quote a self-destructive price, the affected
+    side is suppressed (NaN) -- the same response `max_inventory` uses for
+    its own hard limit, just triggered by the quote itself crossing mid
+    instead of a separate position threshold.
+    """
+    if not np.isnan(bid) and bid > mid:
+        bid = np.nan
+    if not np.isnan(ask) and ask < mid:
+        ask = np.nan
+    return bid, ask
+
+
 def apply_tolerance_band(
     theoretical_bid: float,
     theoretical_ask: float,

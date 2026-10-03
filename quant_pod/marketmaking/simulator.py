@@ -21,7 +21,11 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from quant_pod.marketmaking.avellaneda_stoikov import AvellanedaStoikovQuoter, apply_tolerance_band
+from quant_pod.marketmaking.avellaneda_stoikov import (
+    AvellanedaStoikovQuoter,
+    apply_tolerance_band,
+    suppress_quotes_crossing_mid,
+)
 from quant_pod.marketmaking.order_flow import simulate_mid_price_path
 
 
@@ -114,6 +118,7 @@ def run_market_maker_sim(
         time_remaining = max(horizon - step * dt, 0.0)
         q = inventory[step]
         b, a = quoter.quote(mid, q, time_remaining)
+        b, a = suppress_quotes_crossing_mid(b, a, mid)
         if max_inventory is not None:
             if q + fill_size > max_inventory:
                 b = np.nan

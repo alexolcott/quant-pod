@@ -63,7 +63,8 @@ def quote(
     kappa: float = typer.Option(1.5, help="Order-arrival intensity decay"),
     arrival_rate: float = typer.Option(1.0, help="'A' in lambda(delta) = A * exp(-kappa * delta), per bar"),
     time_horizon: float = typer.Option(1.0, help="Constant AS time-to-horizon term, refreshed every tick"),
-    max_position: float = typer.Option(10.0, help="Hard inventory limit (reuses RiskLimits.max_position)"),
+    fill_size: float = typer.Option(1.0, help="Shares per fill -- PnL scales roughly linearly with this"),
+    max_position: float = typer.Option(10.0, help="Hard inventory limit in shares, like fill_size (reuses RiskLimits.max_position)"),
     vol_window: int = typer.Option(20, help="Rolling window (in bars) for the live sigma estimate"),
     default_sigma: float = typer.Option(1.0, help="Sigma to use until vol_window bars of history accumulate"),
     initial_cash: float = typer.Option(100_000.0, help="Starting cash"),
@@ -75,7 +76,7 @@ def quote(
     result = asyncio.run(
         run_market_maker_trader(
             symbol, gamma=gamma, kappa=kappa, arrival_rate=arrival_rate, time_horizon=time_horizon,
-            vol_window=vol_window, default_sigma=default_sigma, initial_cash=initial_cash,
+            fill_size=fill_size, vol_window=vol_window, default_sigma=default_sigma, initial_cash=initial_cash,
             quote_band=quote_band, risk_limits=RiskLimits(max_position=max_position), seed=seed,
         )
     )

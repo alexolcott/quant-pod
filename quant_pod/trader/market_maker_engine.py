@@ -39,7 +39,12 @@ from quant_pod.common.config import REPLAY_ZMQ_ADDR
 from quant_pod.common.events import Bar, Order, OrderType, Side
 from quant_pod.common.logging import get_logger
 from quant_pod.ingester.replay import END_OF_STREAM
-from quant_pod.marketmaking.avellaneda_stoikov import apply_tolerance_band, optimal_spread, reservation_price
+from quant_pod.marketmaking.avellaneda_stoikov import (
+    apply_tolerance_band,
+    optimal_spread,
+    reservation_price,
+    suppress_quotes_crossing_mid,
+)
 from quant_pod.marketmaking.simulator import Fill, MarketMakerResult, fill_probability
 from quant_pod.trader.bar_buffer import BarBuffer
 from quant_pod.trader.latency import LatencyTracker
@@ -124,6 +129,7 @@ async def run_market_maker_trader(
             r = reservation_price(mid, position, gamma, sigma, time_horizon)
             spread = optimal_spread(gamma, sigma, time_horizon, kappa)
             bid, ask = r - spread / 2, r + spread / 2
+            bid, ask = suppress_quotes_crossing_mid(bid, ask, mid)
 
             if not risk_limits.check(_hypothetical_order(symbol, Side.BUY, fill_size), position, mid)[0]:
                 bid = np.nan
