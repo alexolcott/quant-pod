@@ -17,6 +17,11 @@ from quant_pod.analyzer import metrics as m
 from quant_pod.common.config import DATA_DIR
 from quant_pod.ingester import store
 from quant_pod.ingester.sources.yfinance_source import YFinanceSource
+from quant_pod.marketmaking.avellaneda_stoikov import AvellanedaStoikovQuoter
+from quant_pod.marketmaking.historical import run_market_maker_on_bars
+from quant_pod.marketmaking.markout import compute_markouts, summarize_markouts
+from quant_pod.marketmaking.simulator import run_market_maker_sim
+from quant_pod.marketmaking.simulator import summarize as summarize_market_maker
 from quant_pod.research.backtester import run_backtest
 from quant_pod.research.strategies.moving_average import MovingAverageCrossover
 from quant_pod.research.strategies.risk_ratio import RiskRatioStrategy
@@ -91,7 +96,170 @@ def drawdown_figure(equity: pd.Series) -> go.Figure:
     return fig
 
 
+def mm_price_figure(result, x=None, x_title: str = "step") -> go.Figure:
+    x = x if x is not None else list(range(len(result.mid)))
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=x, y=result.ask, mode="lines", line=dict(width=0), hoverinfo="skip", showlegend=False))
+    fig.add_trace(
+        go.Scatter(
+            x=x, y=result.bid, mode="lines", line=dict(width=0), fill="tonexty",
+            fillcolor="rgba(42, 120, 214, 0.15)", hoverinfo="skip", showlegend=False, name="bid-ask",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=x, y=result.mid, mode="lines", name="mid",
+            line=dict(color=COLOR_SERIES_1, width=1.5),
+            hovertemplate=f"{x_title} %{{x}}<br>mid $%{{y:.2f}}<extra>mid</extra>",
+        )
+    )
+    fig.update_layout(
+        title="Quotes around mid price (shaded band = bid/ask; gaps = inventory limit pulled that side)",
+        showlegend=False,
+        margin=dict(l=40, r=20, t=40, b=30),
+        height=340,
+        plot_bgcolor="#fcfcfb",
+        paper_bgcolor="#fcfcfb",
+        xaxis=dict(title=x_title, gridcolor=COLOR_GRID, linecolor=COLOR_AXIS),
+        yaxis=dict(title="Price ($)", gridcolor=COLOR_GRID, linecolor=COLOR_AXIS),
+    )
+    return fig
+
+
+def mm_inventory_figure(result, x=None, x_title: str = "step") -> go.Figure:
+    x = x if x is not None else list(range(len(result.inventory)))
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=x, y=result.inventory, mode="lines", fill="tozeroy",
+            line=dict(color=COLOR_SERIES_2, width=1.5), fillcolor="rgba(235, 104, 52, 0.15)",
+            hovertemplate=f"{x_title} %{{x}}<br>inventory %{{y:.0f}}<extra>inventory</extra>", showlegend=False,
+        )
+    )
+    fig.update_layout(
+        title="Inventory",
+        margin=dict(l=40, r=20, t=40, b=30),
+        height=200,
+        plot_bgcolor="#fcfcfb",
+        paper_bgcolor="#fcfcfb",
+        xaxis=dict(title=x_title, gridcolor=COLOR_GRID, linecolor=COLOR_AXIS),
+        yaxis=dict(title="shares", gridcolor=COLOR_GRID, linecolor=COLOR_AXIS, zeroline=True, zerolinecolor=COLOR_AXIS),
+    )
+    return fig
+
+
+MARKOUT_HORIZONS = [10, 60, 300]  # ~10s / 1min / 5min at the simulator's default dt (one simulated second)
+
+
 st.title("quant-pod research dashboard")
+
+mode = st.sidebar.radio("Mode", ["Bar strategies", "Market maker"])
+st.sidebar.divider()
+
+if mode == "Market maker":
+    with st.sidebar:
+        st.header("Data")
+        data_source = st.radio("Data source", ["Synthetic", "Real symbol"])
+
+        if data_source == "Real symbol":
+            mm_symbols = cached_symbols()
+            mm_symbol = st.selectbox(
+                "Symbol", options=mm_symbols, index=0 if mm_symbols else None,
+                placeholder="No data cached yet", key="mm_symbol",
+            )
+            mm_start = st.date_input("Start", value=date.today() - timedelta(days=365), key="mm_start")
+            mm_end = st.date_input("End", value=date.today(), key="mm_end")
+        else:
+            mid0 = st.number_input("Starting mid-price", value=100.0)
+            sigma = st.slider("Mid-price volatility (sigma)", 0.05, 2.0, 0.3, step=0.05)
+            horizon = st.slider("Horizon (trading days)", 0.1, 3.0, 1.0, step=0.1)
+
+        st.header("Model")
+        gamma = st.slider("Risk aversion (gamma)", 0.0, 2.0, 0.1, step=0.01)
+        kappa = st.slider("Order-arrival decay (kappa)", 0.5, 5.0, 1.5, step=0.1)
+        if data_source == "Real symbol":
+            # Per-BAR intensity/horizon here, not per-second like the synthetic
+            # side's defaults -- real bars are daily, so those values would
+            # saturate (arrival_rate=140/day would mean ~140 fills/day) or
+            # decay to nothing (a 1-day horizon vanishes after bar 1) if reused.
+            arrival_rate = st.slider("Arrival intensity (A, per bar)", 0.1, 20.0, 1.0, step=0.1)
+            time_horizon = st.slider("Time horizon (bars, constant)", 1.0, 60.0, 20.0, step=1.0)
+            vol_window = st.slider("Volatility window (bars)", 5, 60, 20)
+            default_sigma = st.number_input("Fallback sigma (used until the window fills)", value=1.0)
+        else:
+            arrival_rate = st.slider("Arrival intensity (A)", 1.0, 300.0, 140.0)
+
+        limit_inventory = st.checkbox("Limit inventory", value=False)
+        max_inventory = st.slider("Max inventory", 1.0, 50.0, 10.0, step=1.0) if limit_inventory else None
+        seed = st.number_input("Random seed", value=7, step=1)
+        run_mm = st.button("Run simulation", type="primary")
+
+    if not run_mm and "last_mm_result" not in st.session_state:
+        st.info("Configure the model in the sidebar and click **Run simulation**.")
+        st.stop()
+
+    if run_mm:
+        if data_source == "Real symbol":
+            if not mm_symbol:
+                st.error("Fetch a symbol in Bar strategies mode first, or pick a cached one.")
+                st.stop()
+            bars = store.read_bars(mm_symbol, start=mm_start, end=mm_end)
+            if bars.empty:
+                st.error(f"No cached {mm_symbol} bars between {mm_start} and {mm_end}.")
+                st.stop()
+            with st.spinner("Simulating..."):
+                result = run_market_maker_on_bars(
+                    bars, gamma=gamma, kappa=kappa, arrival_rate=arrival_rate,
+                    time_horizon=time_horizon, vol_window=vol_window, default_sigma=default_sigma,
+                    max_inventory=max_inventory, seed=int(seed),
+                )
+            result_x, result_x_title = bars.index, "date"
+        else:
+            quoter = AvellanedaStoikovQuoter(gamma=gamma, kappa=kappa, sigma=sigma)
+            with st.spinner("Simulating..."):
+                result = run_market_maker_sim(
+                    quoter, mid0=mid0, sigma=sigma, horizon=horizon, arrival_rate=arrival_rate,
+                    max_inventory=max_inventory, seed=int(seed),
+                )
+            result_x, result_x_title = None, "step"
+        st.session_state["last_mm_result"] = (result, result_x, result_x_title)
+
+    result, result_x, result_x_title = st.session_state["last_mm_result"]
+    stats = summarize_market_maker(result)
+
+    st.subheader("Avellaneda-Stoikov market maker")
+    cols = st.columns(5)
+    cols[0].metric("Total PnL", f"{stats['total_pnl']:+.2f}")
+    cols[1].metric("Fills", f"{stats['num_fills']}")
+    cols[2].metric("Final inventory", f"{stats['final_inventory']:+.0f}")
+    cols[3].metric("Max |inventory|", f"{stats['max_abs_inventory']:.0f}")
+    cols[4].metric("Avg spread", f"{stats['avg_spread_bps']:.1f} bps")
+
+    st.plotly_chart(mm_price_figure(result, x=result_x, x_title=result_x_title), use_container_width=True)
+    st.plotly_chart(mm_inventory_figure(result, x=result_x, x_title=result_x_title), use_container_width=True)
+
+    st.subheader("Markout decomposition")
+    if not result.fills:
+        st.caption("No fills.")
+    else:
+        horizons = [h for h in MARKOUT_HORIZONS if h < len(result.mid)]
+        markouts = compute_markouts(result, horizons=horizons)
+        markout_stats = summarize_markouts(markouts, horizons=horizons)
+        table = pd.DataFrame(markout_stats).T.rename_axis("horizon").rename(
+            columns={
+                "avg_spread_capture": "spread capture", "avg_adverse_selection": "adverse selection",
+                "avg_total_markout": "total", "n": "n fills",
+            }
+        )
+        st.caption("Per-unit, averaged over fills with a full horizon available.")
+        st.dataframe(
+            table.style.format({
+                "spread capture": "{:+.4f}", "adverse selection": "{:+.4f}",
+                "total": "{:+.4f}", "n fills": "{:.0f}",
+            }),
+            use_container_width=True,
+        )
+    st.stop()
 
 with st.sidebar:
     st.header("Data")

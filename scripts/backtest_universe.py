@@ -19,6 +19,7 @@ import pandas as pd
 import typer
 
 from quant_pod.analyzer import metrics as m
+from quant_pod.analyzer.robust_stats import deflated_sharpe_ratio
 from quant_pod.common.config import DATA_DIR, REPORTS_DIR
 from quant_pod.common.logging import get_logger
 from quant_pod.ingester import store
@@ -55,6 +56,7 @@ def main(
     t0 = time.perf_counter()
 
     all_rows: list[dict] = []
+    returns_by_key: dict[tuple[str, str], pd.Series] = {}
     skipped = 0
     for strategy_name in strategy_names:
         strategy_cls = STRATEGIES[strategy_name]
@@ -70,6 +72,7 @@ def main(
                 summary["symbol"] = symbol
                 summary["strategy"] = strategy_name
                 all_rows.append(summary)
+                returns_by_key[(strategy_name, symbol)] = bt.returns
             except Exception as e:
                 log.warning("%s/%s failed: %s", strategy_name, symbol, e)
 
@@ -99,6 +102,16 @@ def main(
         print(f"\nTop {top} by Sharpe:")
         print(sub.sort_values("sharpe", ascending=False)[["total_return", "sharpe", "max_drawdown", "num_trades"]]
               .head(top).to_string(formatters={"total_return": "{:.2%}".format, "max_drawdown": "{:.2%}".format}))
+
+        best_symbol = sub["sharpe"].idxmax()
+        best_returns = returns_by_key[(strategy_name, best_symbol)]
+        dsr = deflated_sharpe_ratio(best_returns, n_trials=len(sub))
+        print(
+            f"\nBest performer ({best_symbol}, sharpe={sub.loc[best_symbol, 'sharpe']:.2f}) picked out of "
+            f"{len(sub)} symbols tried -- deflated Sharpe ratio: {dsr['deflated_sharpe_ratio']:.1%} "
+            f"(probability this Sharpe reflects real skill, not multiple-testing luck; "
+            f"the no-skill benchmark for {len(sub)} trials is {dsr['benchmark_sharpe_annualized']:.2f} annualized)"
+        )
 
         print(f"\nBottom {top} by Sharpe:")
         print(sub.sort_values("sharpe", ascending=True)[["total_return", "sharpe", "max_drawdown", "num_trades"]]

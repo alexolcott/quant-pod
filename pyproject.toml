@@ -17,6 +17,7 @@ dependencies = [
     "pyzmq>=26",
     "matplotlib>=3.8",
     "typer>=0.12",
+    "scipy>=1.11",
 ]
 
 [project.optional-dependencies]

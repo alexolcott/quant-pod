@@ -14,6 +14,7 @@ why it's built the way it is, and how to extend it.
 - [`trader/` — the live engine](#trader--the-live-engine)
 - [`trader/hotpath/` — the C++ matching engine](#traderhotpath--the-c-matching-engine)
 - [`dashboard/` — the Streamlit UI](#dashboard--the-streamlit-ui)
+- [`marketmaking/` — see `docs/MARKET_MAKING.md`](MARKET_MAKING.md)
 - [Full command reference](#full-command-reference)
 - [Common workflows](#common-workflows)
 - [Extending the pod](#extending-the-pod)

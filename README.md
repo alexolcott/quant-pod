@@ -8,6 +8,13 @@ See **[docs/GUIDE.md](docs/GUIDE.md)** for a full walkthrough of every
 module, a complete command reference, and common workflows. This README is
 just the quickstart.
 
+Also includes an Avellaneda-Stoikov market maker (`quant_pod/marketmaking/`,
+`scripts/run_market_maker.py`, `python -m quant_pod.trader.cli quote`) and
+rigorous backtest statistics (`quant_pod/analyzer/robust_stats.py`: deflated
+Sharpe ratio, block-bootstrap confidence intervals, purged walk-forward CV)
+— see **[docs/MARKET_MAKING.md](docs/MARKET_MAKING.md)** for the model,
+assumptions, and what the statistics actually show.
+
 ```
 ingester (fetch + store)  ->  research (backtest strategies)
         |
